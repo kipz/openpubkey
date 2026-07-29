@@ -76,13 +76,13 @@ func NewJwksServer(signer crypto.Signer, alg jose.KeyAlgorithm) (*JwksServer, st
 	}
 
 	// Find an empty port
-	listener, err := net.Listen("tcp", ":0")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to bind to an available port: %w", err)
 	}
 
 	server := &JwksServer{
-		uri:       fmt.Sprintf("http://localhost:%d", listener.Addr().(*net.TCPAddr).Port),
+		uri:       fmt.Sprintf("http://%s", listener.Addr().String()),
 		jwksBytes: keySetBytes,
 	}
 

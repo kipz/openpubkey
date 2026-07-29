@@ -44,13 +44,12 @@ type CosignerProvider struct {
 
 func (c *CosignerProvider) RequestToken(ctx context.Context, signer crypto.Signer, pkt *pktoken.PKToken, redirCh chan string) (*pktoken.PKToken, error) {
 	// Find an unused port
-	listener, err := net.Listen("tcp", ":0")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("failed to bind to an available port: %w", err)
 	}
 
-	port := listener.Addr().(*net.TCPAddr).Port
-	host := fmt.Sprintf("localhost:%d", port)
+	host := listener.Addr().String()
 	redirectURI := fmt.Sprintf("http://%s%s", host, c.CallbackPath)
 
 	// We set the buffer size to one and then in the CallbackPath handler we
