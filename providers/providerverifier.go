@@ -65,6 +65,9 @@ type ProviderVerifierOpts struct {
 	// If empty (not set), defaults to AudPrefixForGQCommitment ("OPENPUBKEY-PKTOKEN:").
 	// Set to a custom value to use a different prefix.
 	GQAudiencePrefix string
+	// AudClaimPrefix optionally requires the aud to be this prefix followed by
+	// the cicHash. Only valid with AUD_CLAIM. See RFC 8725 Section 3.12.
+	AudClaimPrefix string
 }
 
 // Creates a new ProviderVerifier with required fields
@@ -118,6 +121,10 @@ func (v *DefaultProviderVerifier) VerifyIDToken(ctx context.Context, idToken []b
 		if v.options.GQAudiencePrefix != "" && v.options.GQAudiencePrefix != AudPrefixForGQCommitment {
 			return fmt.Errorf("GQAudiencePrefix is set but CommitType does not use GQCommitment")
 		}
+	}
+
+	if v.options.AudClaimPrefix != "" && v.commitType != CommitTypesEnum.AUD_CLAIM {
+		return fmt.Errorf("AudClaimPrefix is set but CommitType is not AUD_CLAIM")
 	}
 
 	idt, err := oidc.NewJwt(idToken)
@@ -282,6 +289,19 @@ func (v *DefaultProviderVerifier) verifyCommitment(idt *oidc.Jwt, cic *clientins
 		commitment, commitmentFound = claims[v.commitType.Claim]
 		if !commitmentFound {
 			return fmt.Errorf("missing commitment claim %s", v.commitType.Claim)
+		}
+
+		if v.options.AudClaimPrefix != "" {
+			audStr, ok := commitment.(string)
+			if !ok {
+				return fmt.Errorf("audience claim must be a string when AudClaimPrefix is set, got %T", commitment)
+			}
+			rest, found := strings.CutPrefix(audStr, v.options.AudClaimPrefix)
+			if !found {
+				return fmt.Errorf("audience claim must be prefixed by (%s), got (%s) instead",
+					v.options.AudClaimPrefix, audStr)
+			}
+			commitment = rest
 		}
 	}
 

@@ -27,6 +27,7 @@ In this document we provide needed background on JSON Web Signatures (JWS), ID T
       - [GQ Signing](#gq-signing)
     - [GQ Signed Audience-bound PK Tokens - GitHub Example](#gq-signed-audience-bound-pk-tokens---github-example)
       - [Audience-Commitment](#audience-commitment)
+      - [Namespacing the Audience-Commitment](#namespacing-the-audience-commitment)
       - [GQ Signatures Are Required For Aud-Commitment PK Tokens](#gq-signatures-are-required-for-aud-commitment-pk-tokens)
     - [GQ-Commitment PK Tokens (Gitlab-CI Example)](#gq-commitment-pk-tokens-gitlab-ci-example)
       - [GQ-Commitment to the CIC](#gq-commitment-to-the-cic)
@@ -570,6 +571,14 @@ nonce = SHA3(
 ```
 
 User identity ID Token issuance flows set the `aud` to a unique identifier to scope the ID Token to a particular service or OIDC client. This is done, among other reasons to prevent a malicious service from replaying the ID Tokens it receives from users to impersonate those users to another service. Allowing the requesting party to specify the `aud` as is done in machine identity would be insecure for user identity. However it is both secure and the primary pattern in machine identity flows.
+
+#### Namespacing the Audience-Commitment
+
+By default the `aud` is exactly the cicHash. A relying party may instead require a namespace prefix, so that the `aud` is the prefix followed by the cicHash, by setting `AudClaimPrefix` in `ProviderVerifierOpts`. This is optional and off by default.
+
+Because the requesting party chooses the `aud` in machine identity flows, an unprefixed commitment is a bare opaque string that could coincide with an identifier some other service expects for itself. Using a distinct `aud` value for a distinct use of JWTs from the same issuer is the cross-JWT confusion mitigation recommended by [RFC 8725 Section 3.12](https://www.rfc-editor.org/rfc/rfc8725.html#section-3.12). Note that `aud` values are `StringOrURI`, so a prefix containing a `:` must form a valid URI ([RFC 7519 Section 2](https://www.rfc-editor.org/rfc/rfc7519.html#section-2)); `example-rp:` is a legal scheme, `example_rp:` is not.
+
+This differs from the `OPENPUBKEY-PKTOKEN:` prefix required for GQ-commitments. That prefix is mandatory and exists to stop an existing ID Token being repurposed as a PK Token, a risk that does not apply here because the `aud` *is* the commitment. This prefix is optional and exists only to namespace the audience.
 
 #### GQ Signatures Are Required For Aud-Commitment PK Tokens
 

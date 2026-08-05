@@ -476,3 +476,169 @@ func TestGQCommitmentArrayAudReturnsError(t *testing.T) {
 	err = pv.VerifyIDToken(context.Background(), tokens.IDToken, cic)
 	require.ErrorContains(t, err, "must be a string")
 }
+
+func TestAudClaimPrefix(t *testing.T) {
+	const customPrefix = "dd-attest:"
+	clientID := "test-client-id"
+	issuer := "mockIssuer"
+
+	testCases := []struct {
+		name           string
+		audClaimPrefix string
+		commitFunc     func(*mocks.IDTokenTemplate, string)
+		expError       string
+	}{
+		{
+			name:           "prefixed audience verifies",
+			audClaimPrefix: customPrefix,
+			commitFunc: func(idtTemp *mocks.IDTokenTemplate, cicHash string) {
+				idtTemp.Aud = customPrefix + cicHash
+			},
+		},
+		{
+			name:           "bare cicHash rejected when a prefix is required",
+			audClaimPrefix: customPrefix,
+			commitFunc:     mocks.AddAudCommit,
+			expError:       "audience claim must be prefixed by",
+		},
+		{
+			name:           "wrong prefix rejected",
+			audClaimPrefix: customPrefix,
+			commitFunc: func(idtTemp *mocks.IDTokenTemplate, cicHash string) {
+				idtTemp.Aud = "other-tool:" + cicHash
+			},
+			expError: "audience claim must be prefixed by",
+		},
+		{
+			name:           "correct prefix but wrong commitment still rejected",
+			audClaimPrefix: customPrefix,
+			commitFunc: func(idtTemp *mocks.IDTokenTemplate, _ string) {
+				idtTemp.Aud = customPrefix + "not-the-cic-hash"
+			},
+			expError: "commitment claim doesn't match",
+		},
+		{
+			name:           "unset prefix keeps the bare cicHash behaviour",
+			audClaimPrefix: "",
+			commitFunc:     mocks.AddAudCommit,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			idtTemplate := mocks.IDTokenTemplate{
+				Issuer:      issuer,
+				Nonce:       "empty",
+				NoNonce:     true,
+				Alg:         "RS256",
+				ExtraClaims: map[string]any{},
+				CommitFunc:  tc.commitFunc,
+			}
+
+			cic := GenCICExtra(t, map[string]any{})
+
+			op, backendMock, _, err := NewMockProvider(MockProviderOpts{
+				Issuer:     issuer,
+				Alg:        "RS256",
+				ClientID:   clientID,
+				GQSign:     false,
+				NumKeys:    2,
+				CommitType: CommitTypesEnum.AUD_CLAIM,
+				VerifierOpts: ProviderVerifierOpts{
+					CommitType:        CommitTypesEnum.AUD_CLAIM,
+					ClientID:          clientID,
+					SkipClientIDCheck: true,
+					AudClaimPrefix:    tc.audClaimPrefix,
+				},
+			})
+			require.NoError(t, err)
+
+			opSignKey, keyID, _ := backendMock.RandomSigningKey()
+			idtTemplate.KeyID = keyID
+			idtTemplate.SigningKey = opSignKey
+			backendMock.SetIDTokenTemplate(&idtTemplate)
+
+			tokens, err := op.RequestTokens(context.Background(), cic)
+			require.NoError(t, err)
+
+			pv := NewProviderVerifier(issuer, ProviderVerifierOpts{
+				CommitType:        CommitTypesEnum.AUD_CLAIM,
+				DiscoverPublicKey: &backendMock.PublicKeyFinder,
+				SkipClientIDCheck: true,
+				AudClaimPrefix:    tc.audClaimPrefix,
+			})
+
+			err = pv.VerifyIDToken(context.Background(), tokens.IDToken, cic)
+			if tc.expError != "" {
+				require.ErrorContains(t, err, tc.expError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestAudClaimPrefixRejectedForOtherCommitTypes(t *testing.T) {
+	for _, commitType := range []CommitType{CommitTypesEnum.NONCE_CLAIM, CommitTypesEnum.GQ_BOUND} {
+		pv := NewProviderVerifier("mockIssuer", ProviderVerifierOpts{
+			CommitType:        commitType,
+			SkipClientIDCheck: true,
+			GQOnly:            commitType.GQCommitment,
+			AudClaimPrefix:    "dd-attest:",
+		})
+
+		// The guard runs before the token is parsed.
+		err := pv.VerifyIDToken(context.Background(), []byte("not.a.token"), GenCICExtra(t, map[string]any{}))
+		require.ErrorContains(t, err, "AudClaimPrefix is set but CommitType is not AUD_CLAIM")
+	}
+}
+
+func TestAudClaimPrefixArrayAudReturnsError(t *testing.T) {
+	const customPrefix = "dd-attest:"
+	issuer := "mockIssuer"
+	clientID := "test-client-id"
+
+	idtTemplate := mocks.IDTokenTemplate{
+		Issuer:      issuer,
+		Nonce:       "empty",
+		NoNonce:     true,
+		Alg:         "RS256",
+		ExtraClaims: map[string]any{"aud": []any{customPrefix + "abc", "other"}},
+		CommitFunc:  mocks.AddAudCommit,
+	}
+	cic := GenCICExtra(t, map[string]any{})
+
+	op, backendMock, _, err := NewMockProvider(MockProviderOpts{
+		Issuer:     issuer,
+		Alg:        "RS256",
+		ClientID:   clientID,
+		GQSign:     false,
+		NumKeys:    2,
+		CommitType: CommitTypesEnum.AUD_CLAIM,
+		VerifierOpts: ProviderVerifierOpts{
+			CommitType:        CommitTypesEnum.AUD_CLAIM,
+			ClientID:          clientID,
+			SkipClientIDCheck: true,
+		},
+	})
+	require.NoError(t, err)
+
+	opSignKey, keyID, _ := backendMock.RandomSigningKey()
+	idtTemplate.KeyID = keyID
+	idtTemplate.SigningKey = opSignKey
+	backendMock.SetIDTokenTemplate(&idtTemplate)
+
+	tokens, err := op.RequestTokens(context.Background(), cic)
+	require.NoError(t, err)
+
+	pv := NewProviderVerifier(issuer, ProviderVerifierOpts{
+		CommitType:        CommitTypesEnum.AUD_CLAIM,
+		DiscoverPublicKey: &backendMock.PublicKeyFinder,
+		SkipClientIDCheck: true,
+		AudClaimPrefix:    customPrefix,
+	})
+
+	// An array aud is valid per RFC 7519; verification must return an error, not panic.
+	err = pv.VerifyIDToken(context.Background(), tokens.IDToken, cic)
+	require.ErrorContains(t, err, "must be a string")
+}
